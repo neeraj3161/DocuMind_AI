@@ -4,15 +4,16 @@ import os
 client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
 
 def generate_answer(question, content_chunks):
-    print('come later')
     context = "\n\n".join(content_chunks)
     prompt = f"""
-    You are an expert technical assistant.
+    You are a technical assistant.
 
-    Answer clearly using ONLY the context below.
+    Use the provided context to answer the question.
 
-    If the answer is not in the context, say:
-    "I don't have enough information in the document."
+    If the answer is clearly supported by the context, answer confidently.
+    If the context partially supports the answer, use the available information to respond.
+
+    Only say you don't have enough information if the topic is completely unrelated to the context.
 
     Context:
     {context}

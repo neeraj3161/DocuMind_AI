@@ -1,6 +1,6 @@
 import nltk
 
-def chunk_text(text, chunk_size=500, overlap=1):
+def chunk_text(text, chunk_size=300, overlap=1):
     sentences = nltk.sent_tokenize(text)
     chunks = []
     current_chunk = []

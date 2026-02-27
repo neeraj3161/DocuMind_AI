@@ -11,7 +11,8 @@
 
 from sentence_transformers import SentenceTransformer
 
-model = SentenceTransformer('all-MiniLM-L6-v2')
+# model = SentenceTransformer('all-MiniLM-L6-v2')
+model = SentenceTransformer("sentence-transformers/multi-qa-mpnet-base-dot-v1")
 
 def create_embedding(text: str):
     embedding = model.encode(text,batch_size=32, normalize_embeddings=True)

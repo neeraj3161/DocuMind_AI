@@ -3,6 +3,7 @@ from psycopg2.extras import execute_values
 from app.db.database import get_connection
 from app.Contracts.Chunks import Chunk
 from typing import List
+import sys
 import nltk
 # nltk.download('punkt')
 
@@ -13,7 +14,6 @@ def insert_chunks(chunkList: List[Chunk]):
     cursor = connection.cursor()
 
     query_values = []
-
     for chunk in chunkList:
         chunk_id = str(uuid.uuid4())
 
@@ -24,16 +24,17 @@ def insert_chunks(chunkList: List[Chunk]):
             chunk.chunk_index,
             chunk.content,
             chunk.embedding,
-            chunk.page_number
+            chunk.page_number,
+            chunk.content
         ))
 
     query = """
         INSERT INTO aip.chunks
-        (id, document_id, user_id, chunk_index, content, embedding, page_number)
+        (id, document_id, user_id, chunk_index, content, embedding, page_number, content_tsv)
         VALUES %s
     """
 
-    execute_values(cursor, query, query_values)
+    execute_values(cursor, query, query_values, template="(%s,%s,%s,%s,%s,%s,%s,to_tsvector('english',%s))")
 
     connection.commit()
     cursor.close()
