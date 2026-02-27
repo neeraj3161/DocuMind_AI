@@ -3,6 +3,8 @@ from psycopg2.extras import execute_values
 from app.db.database import get_connection
 from app.Contracts.Chunks import Chunk
 from typing import List
+import nltk
+# nltk.download('punkt')
 
 def insert_chunks(chunkList: List[Chunk]):
     print("Inserting chunks")
@@ -20,8 +22,8 @@ def insert_chunks(chunkList: List[Chunk]):
             chunk.document_id,
             chunk.user_id,
             chunk.chunk_index,
-            chunk.content,          # ✅ raw text
-            chunk.embedding,        # ✅ list (NOT str)
+            chunk.content,
+            chunk.embedding,
             chunk.page_number
         ))
 

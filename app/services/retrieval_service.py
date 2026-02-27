@@ -1,17 +1,26 @@
 from app.db.database import get_connection
 
 def retrieve_similar_chunks(query_embedding, user_id, limit=5):
-    connection = get_connection()
-    cursor = connection.cursor()
-    query_embedding = "[" + ",".join(map(str, query_embedding)) + "]"
+    conn = get_connection()
+    cursor = conn.cursor()
 
-    cursor.execute("""SELECT content
-                   FROM aip.chunks
-                   WHERE user_id = %s
-                   ORDER BY embedding <-> %s::vector
-                   LIMIT %s""", (user_id, query_embedding, limit)
-                   )
+    embedding_str = "[" + ",".join(map(str, query_embedding)) + "]"
+
+    cursor.execute("""
+        SELECT content, embedding <-> %s::vector AS distance
+        FROM aip.chunks
+        WHERE user_id = %s
+        ORDER BY distance
+        LIMIT %s
+    """, (embedding_str, user_id, limit))
+
     results = cursor.fetchall()
+
     cursor.close()
-    connection.close()
-    return [row[0] for row in results]
+    conn.close()
+
+    # filter by threshold to get the most relevant result
+    threshold = 0.6
+    filtered = [row[0] for row in results if row[1] < threshold]
+
+    return filtered
