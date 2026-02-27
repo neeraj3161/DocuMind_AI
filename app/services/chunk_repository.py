@@ -1,16 +1,40 @@
 import uuid
+from psycopg2.extras import execute_values
 from app.db.database import get_connection
+from app.Contracts.Chunks import Chunk
+from typing import List
 
-def insert_chunk(document_id, user_id, chunk_index, content, embedding):
+def insert_chunks(chunkList: List[Chunk]):
+    print("Inserting chunks")
+
     connection = get_connection()
     cursor = connection.cursor()
 
-    chunk_id = str(uuid.uuid4())
+    query_values = []
 
-    cursor.execute("""
-    INSERT INTO aip.chunks (id, user_id, chunk_index, content, embedding)
-    VALUES (%s, %s, %s, %s, %s)
-    """, (chunk_id, user_id, chunk_index, content, embedding))
+    for chunk in chunkList:
+        chunk_id = str(uuid.uuid4())
+
+        query_values.append((
+            chunk_id,
+            chunk.document_id,
+            chunk.user_id,
+            chunk.chunk_index,
+            chunk.content,          # ✅ raw text
+            chunk.embedding,        # ✅ list (NOT str)
+            chunk.page_number
+        ))
+
+    query = """
+        INSERT INTO aip.chunks
+        (id, document_id, user_id, chunk_index, content, embedding, page_number)
+        VALUES %s
+    """
+
+    execute_values(cursor, query, query_values)
+
     connection.commit()
     cursor.close()
     connection.close()
+
+    print(f"Bulk insert {len(chunkList)} completed!!")
