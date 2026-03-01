@@ -5,11 +5,8 @@ from fastapi import FastAPI, File, UploadFile, Body
 import uuid
 import shutil
 import os
-
-from colorama import init as colorama_init
-from colorama import Fore
-from colorama import Style
-
+from app.db.database import get_connection
+from app.helpers.terminalColor import red,green,yellow
 
 from app.services.pdf_loader import extract_text_from_pdf
 from app.services.chunker import chunk_text
@@ -26,87 +23,97 @@ UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
+
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     try:
-        print("Upload started")
+        connection = get_connection()
+        with connection.cursor() as cursor:
+            print(f"{yellow}Upload started")
+            file_id = str(uuid.uuid4())
+            file_path = f"{UPLOAD_DIR}/{file_id}.pdf"
 
-        file_id = str(uuid.uuid4())
-        file_path = f"{UPLOAD_DIR}/{file_id}.pdf"
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
 
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            print(f"{green}PDF saved")
 
-        print("PDF saved")
+            data = extract_text_from_pdf(file_path)
+            print(f"{green}Text extracted")
 
-        data = extract_text_from_pdf(file_path)
-        print("Text extracted")
+            chunks = chunk_text(data)
 
-        chunks = chunk_text(data)
+            user_id = "4aabd32c-0f5b-4f11-9bcb-a32c5b97c52d"
 
-        user_id = "4aabd32c-0f5b-4f11-9bcb-a32c5b97c52d"
+            document_id = str(uuid.uuid4())
+            print(f'{yellow}Insert document metadata')
 
-        document_id = str(uuid.uuid4())
-        print('Insert document metadata')
+            insert_documents_metadata(document_id, user_id, connection, cursor, file_path=file_path, file_name=f"{file.filename}.pdf")
 
-        insert_documents_metadata(document_id,user_id,file_path=file_path, file_name=f"{file_id}.pdf")
+            # formula to calculate pageSize total length of single page/chunk size = no of chunks per page
+            # TODO
+            # noOfChunksPerPage = data./500
 
-        # formula to calculate pageSize total length of single page/chunk size = no of chunks per page
-        # TODO
-        # noOfChunksPerPage = data./500
+            batch_size = 300
+            no_of_batch = int(len(chunks) / batch_size) + 1
+            print(len(chunks))
+            print(no_of_batch)
+            for i in range(no_of_batch):
+                batch_chunk = chunks[i * batch_size:(i + 1) * batch_size]
+                print(batch_chunk)
+                print(f'Inserting chunk {i}/{no_of_batch}')
+                chunks_to_insert = []
+                for index, chunk in enumerate(batch_chunk):
+                    embedding = create_embedding(chunk)
+                    print(f"{yellow}Embedding created for chunk {index}", flush=True)
+                    chunks_to_insert.append(Chunk(document_id=document_id,
+                                                  user_id=user_id,
+                                                  chunk_index=index,
+                                                  content=chunk,
+                                                  embedding=embedding))
+                insert_chunks(chunks_to_insert, connection, cursor)
 
-        batch_size = 300
-        no_of_batch = int(len(chunks)/batch_size) + 1
-        print(len(chunks))
-        print(no_of_batch)
-        for i in range(no_of_batch):
-            batch_chunk = chunks[i*batch_size:(i+1)*batch_size]
-            print(batch_chunk)
-            print(f'Inserting chunk {i}/{no_of_batch}')
-            chunks_to_insert = []
-            for index, chunk in enumerate(batch_chunk):
-                embedding = create_embedding(chunk)
-                print(f"{Fore.GREEN}Embedding created for chunk {index}", flush=True)
-                chunks_to_insert.append(Chunk(document_id=document_id,
-                                    user_id=user_id,
-                                    chunk_index=index,
-                                    content=chunk,
-                                    embedding=embedding))
-            insert_chunks(chunks_to_insert)
-
-        print("All chunks inserted")
-
-        return {"message": "Document upload complete and indexed"}
+            print("All chunks inserted")
+            connection.commit()
+            cursor.close()
+            connection.close()
+            return {"message": "Document upload complete and indexed"}
 
     except Exception as e:
         print("ERROR:", str(e))
-        return {"error": str(e)}
+        connection.rollback()
+        cursor.close()
+        connection.close()
+    return {"error": str(e)}
 
 
 @app.post("/ask")
 def ask_question(question: str = Body(...)):
     try:
         print("Ask endpoint hit")
-
+        document_id = "2f7a79f2-0e16-4103-85d4-ce202302f1c3"
         user_id = "4aabd32c-0f5b-4f11-9bcb-a32c5b97c52d"
 
         enhanced_question = f"Explain clearly: {question.lower().strip()}"
         query_embedding = create_embedding(enhanced_question)
-        print("Embedding created")
+        print(f"{yellow}Embedding created")
 
         relevant_chunks = retrieve_similar_chunks(
+            document_id,
             query_embedding=query_embedding,
             user_id=user_id,
+            question=enhanced_question,
             limit=5
         )
-        print("Chunks retrieved:", len(relevant_chunks))
+        print(f"{green}Chunks retrieved:", len(relevant_chunks))
         print(format(relevant_chunks))
-        if(len(relevant_chunks) > 0):
+        answer = 'Empty'
+        if len(relevant_chunks) > 0:
             relevant_chunks = "\n\n".join(relevant_chunks)
             answer = generate_answer(question, relevant_chunks)
         print("Answer generated by AI",answer)
 
-        return {"answer"}
+        return {"answer": answer}
 
     except Exception as e:
         print("ERROR:", str(e))
