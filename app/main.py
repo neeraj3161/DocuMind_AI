@@ -1,7 +1,8 @@
 
 from lib2to3.pgen2.parse import Parser
 
-from fastapi import FastAPI, File, UploadFile, Body
+from fastapi import FastAPI, File, UploadFile, Body, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
 import uuid
 import shutil
 import os
@@ -16,84 +17,143 @@ from app.services.rag_service import generate_answer
 from app.services.retrieval_service import retrieve_similar_chunks
 from app.services.document_service import insert_documents_metadata
 from app.Contracts.Chunks import Chunk
+from app.services.websocket_manager import manager
 
 app = FastAPI(title="DocuMind AI")
+
+origins = [
+    "http://localhost:3000",   # Next.js
+    "http://127.0.0.1:3000",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-
-
-@app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+@app.websocket("/ws/{upload_id}")
+async def websocket_endpoint(websocket: WebSocket, upload_id: str):
+    await manager.connect(upload_id, websocket)
     try:
+        while True:
+            await websocket.receive_text()   # keep connection alive
+    except:
+        await manager.disconnect(upload_id)
+
+@app.post("/testws/{upload_id}")
+async def testws_endpoint(upload_id: str):
+    await manager.send_message(upload_id, "test message")
+    return {"ok": True}
+
+
+@app.post("/upload/{upload_id}")
+async def upload_file(upload_id:str, file: UploadFile = File(...)):
+
+    connection = None
+    cursor = None
+
+    try:
+
         connection = get_connection()
-        with connection.cursor() as cursor:
-            print(f"{yellow}Upload started")
-            file_id = str(uuid.uuid4())
-            file_path = f"{UPLOAD_DIR}/{file_id}.pdf"
+        cursor = connection.cursor()
 
-            with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
+        await manager.send_message(upload_id, "Upload started")
 
-            print(f"{green}PDF saved")
+        file_id = str(uuid.uuid4())
+        file_path = f"{UPLOAD_DIR}/{file_id}.pdf"
 
-            data = extract_text_from_pdf(file_path)
-            print(f"{green}Text extracted")
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
 
-            chunks = chunk_text(data)
+        await manager.send_message(upload_id, "PDF saved")
 
-            user_id = "4aabd32c-0f5b-4f11-9bcb-a32c5b97c52d"
+        data = extract_text_from_pdf(file_path)
 
-            document_id = str(uuid.uuid4())
-            print(f'{yellow}Insert document metadata')
+        await manager.send_message(upload_id, "Text extracted")
 
-            insert_documents_metadata(document_id, user_id, connection, cursor, file_path=file_path, file_name=f"{file.filename}.pdf")
+        chunks = chunk_text(data)
 
-            # formula to calculate pageSize total length of single page/chunk size = no of chunks per page
-            # TODO
-            # noOfChunksPerPage = data./500
+        await manager.send_message(upload_id, f"{len(chunks)} chunks created")
 
-            batch_size = 300
-            no_of_batch = int(len(chunks) / batch_size) + 1
-            print(len(chunks))
-            print(no_of_batch)
-            for i in range(no_of_batch):
-                batch_chunk = chunks[i * batch_size:(i + 1) * batch_size]
-                print(batch_chunk)
-                print(f'Inserting chunk {i}/{no_of_batch}')
-                chunks_to_insert = []
-                for index, chunk in enumerate(batch_chunk):
-                    embedding = create_embedding(chunk)
-                    print(f"{yellow}Embedding created for chunk {index}", flush=True)
-                    chunks_to_insert.append(Chunk(document_id=document_id,
-                                                  user_id=user_id,
-                                                  chunk_index=index,
-                                                  content=chunk,
-                                                  embedding=embedding))
-                insert_chunks(chunks_to_insert, connection, cursor)
-
-            print("All chunks inserted")
-            connection.commit()
-            cursor.close()
-            connection.close()
-            return {"message": "Document upload complete and indexed"}
-
-    except Exception as e:
-        print("ERROR:", str(e))
-        connection.rollback()
-        cursor.close()
-        connection.close()
-    return {"error": str(e)}
-
-
-@app.post("/ask")
-def ask_question(question: str = Body(...)):
-    try:
-        print("Ask endpoint hit")
-        document_id = "2f7a79f2-0e16-4103-85d4-ce202302f1c3"
         user_id = "4aabd32c-0f5b-4f11-9bcb-a32c5b97c52d"
 
+        document_id = str(uuid.uuid4())
+
+        insert_documents_metadata(
+            document_id,
+            user_id,
+            connection,
+            cursor,
+            file_path=file_path,
+            file_name=file.filename
+        )
+
+        await manager.send_message(upload_id, "Document metadata stored")
+
+        batch_size = 300
+        no_of_batch = int(len(chunks) / batch_size) + 1
+
+        for i in range(no_of_batch):
+
+            await manager.send_message(upload_id, f"Processing batch {i+1}/{no_of_batch}")
+
+            batch_chunk = chunks[i * batch_size:(i + 1) * batch_size]
+
+            chunks_to_insert = []
+
+            for index, chunk in enumerate(batch_chunk):
+
+                embedding = create_embedding(chunk)
+
+                chunks_to_insert.append(
+                    Chunk(
+                        document_id=document_id,
+                        user_id=user_id,
+                        chunk_index=index,
+                        content=chunk,
+                        embedding=embedding
+                    )
+                )
+
+            insert_chunks(chunks_to_insert, connection, cursor)
+
+        await manager.send_message(upload_id, "All chunks inserted")
+
+        connection.commit()
+
+        await manager.send_message(upload_id, "Document indexed successfully")
+
+        return {
+            "message": "Document upload complete",
+            "document_id": document_id
+        }
+
+    except Exception as e:
+
+        if connection:
+            connection.rollback()
+
+        await manager.send_message(upload_id, f"Error: {str(e)}")
+
+        return {"error": str(e)}
+
+    finally:
+        if cursor:
+            cursor.close()
+        if connection:
+            connection.close()
+
+@app.post("/ask")
+def ask_question(document_id:str, question: str = Body(...)):
+    try:
+        print("Ask endpoint hit")
+        user_id = "4aabd32c-0f5b-4f11-9bcb-a32c5b97c52d"
         enhanced_question = f"Explain clearly: {question.lower().strip()}"
         query_embedding = create_embedding(enhanced_question)
         print(f"{yellow}Embedding created")
