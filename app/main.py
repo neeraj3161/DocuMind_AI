@@ -1,5 +1,6 @@
 
 from lib2to3.pgen2.parse import Parser
+from typing import List
 
 from fastapi import FastAPI, File, UploadFile, Body, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -108,7 +109,7 @@ async def upload_file(upload_id:str, file: UploadFile = File(...)):
             chunks_to_insert = []
 
             for index, chunk in enumerate(batch_chunk):
-
+                await manager.send_message(upload_id,"creating embedding for chunk {index}/{batch_chunk}")
                 embedding = create_embedding(chunk)
 
                 chunks_to_insert.append(
@@ -150,7 +151,7 @@ async def upload_file(upload_id:str, file: UploadFile = File(...)):
             connection.close()
 
 @app.post("/ask")
-def ask_question(document_id:str, question: str = Body(...)):
+def ask_question(document_ids:List[str], question: str = Body(...)):
     try:
         print("Ask endpoint hit")
         user_id = "4aabd32c-0f5b-4f11-9bcb-a32c5b97c52d"
@@ -158,6 +159,7 @@ def ask_question(document_id:str, question: str = Body(...)):
         query_embedding = create_embedding(enhanced_question)
         print(f"{yellow}Embedding created")
 
+        document_id = document_ids[0]
         relevant_chunks = retrieve_similar_chunks(
             document_id,
             query_embedding=query_embedding,
@@ -182,4 +184,4 @@ def ask_question(document_id:str, question: str = Body(...)):
 
 @app.get("/")
 def root():
-    return {"message": "DocuMind AI isss running"}
+    return {"message": "DocuMind AI is running"}
