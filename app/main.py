@@ -49,7 +49,7 @@ async def websocket_endpoint(websocket: WebSocket, upload_id: str):
 
 @app.post("/testws/{upload_id}")
 async def testws_endpoint(upload_id: str):
-    await manager.send_message(upload_id, "test message")
+    await manager.send_message(client_id=upload_id, message="test message")
     return {"ok": True}
 
 
